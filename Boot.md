@@ -1,843 +1,763 @@
-Manual HTTP Netboot with TI U-Boot and uEnv.txt
+# Manual HTTP Netboot with TI U\-Boot and `uEnv.txt`
 
-This guide explains how to safely test HTTP netbooting on a Texas Instruments board using U-Boot.
+This guide explains how to safely test HTTP netbooting on a Texas Instruments board using U\-Boot\.
 
-The process is intentionally split into two stages:
+The process is split into two stages:
 
-1. Test every command manually at the U-Boot prompt.
-2. Move the working commands into uEnv.txt.
+1. Test every command manually at the U\-Boot prompt\.
+2. Move the working commands into `uEnv.txt`\.
 
-The initial procedure does not write to eMMC, NAND, SPI flash, or the saved U-Boot environment.
+The initial procedure only loads files into RAM\. It does not write to eMMC, NAND, SPI flash, or the saved U\-Boot environment\.
 
-As long as you do not run commands such as the following, your changes should remain temporary:
+Do **not** run any of these commands during initial testing:
 
+```text
 saveenv
 env save
 mmc write
+mmc erase
 nand write
+nand erase
 sf write
+sf erase
 erase
+```
 
-A reboot or power cycle should return the board to its previous configuration.
+A reboot or power cycle should discard temporary `setenv` changes\.
 
-⸻
+---
 
-Goal
+## Accessing the U\-Boot Prompt
 
-The safest initial setup is:
+The manual commands in this guide are entered at the **U\-Boot prompt**, not in a Linux shell\.
 
-* U-Boot loads normally from SD card, eMMC, or another existing boot source.
-* The Linux kernel is downloaded over HTTP.
-* The device tree is downloaded over HTTP.
-* The root filesystem remains on the existing SD card or eMMC.
-* The board uses a manually assigned static IP address.
-* Nothing is written to permanent storage.
+Use a serial terminal such as Minicom:
 
-Once this works, the root filesystem can later be moved to NFS, initramfs, or another network-based solution.
+```bash
+sudo minicom -D /dev/ttyUSB0 -b 115200
+```
 
-⸻
+Start Minicom before powering on or rebooting the board\. When you see:
 
-Example Network
+```text
+Hit any key to stop autoboot:
+```
 
-This guide uses the following example network:
+press a key before the countdown ends\.
 
-Device	IP address
-HTTP server	192.168.50.10
-TI board	192.168.50.20
-Netmask	255.255.255.0
+The U\-Boot prompt normally looks like:
 
-The board and HTTP server are on the same subnet, so a gateway is not required.
+```text
+=>
+```
 
-Adjust these addresses for your environment.
+Do not type the leading `=>`; enter only the command after it\.
 
-⸻
+A Linux shell normally looks like:
 
-Example HTTP Server Layout
+```text
+root@board:~#
+```
 
-Place the boot files in a directory served by your HTTP server.
+or:
 
-For a newer 64-bit TI board:
+```text
+user@board:~$
+```
 
+If you are at a Linux shell, reboot and interrupt autoboot to return to U\-Boot\.
+
+---
+
+## Goal
+
+The safest first test is:
+
+- U\-Boot loads normally from SD card, eMMC, or another existing boot source\.
+- The Linux kernel is downloaded over HTTP\.
+- The device tree is downloaded over HTTP\.
+- The root filesystem remains on the existing SD card or eMMC\.
+- The board uses a manually assigned static IP address\.
+- Nothing is written to permanent storage\.
+
+---
+
+## Example Network
+
+|Device     |IP address     |
+|-----------|---------------|
+|HTTP server|`192.168.50.10`|
+|TI board   |`192.168.50.20`|
+|Netmask    |`255.255.255.0`|
+
+Because the board and server are on the same subnet, a gateway is not required\.
+
+---
+
+## Example HTTP Server Layout
+
+For a newer 64\-bit TI board:
+
+```text
 /var/www/html/netboot/
 ├── Image
 └── k3-am625-sk.dtb
+```
 
-For an older 32-bit TI board:
+For an older 32\-bit TI board:
 
+```text
 /var/www/html/netboot/
 ├── zImage
 └── am335x-boneblack.dtb
+```
 
-An optional initramfs might also be included:
+Optional initramfs:
 
+```text
 /var/www/html/netboot/
 ├── Image
 ├── k3-am625-sk.dtb
 └── rootfs.cpio.gz
+```
 
 Verify the files from another computer:
 
+```bash
 curl -I http://192.168.50.10/netboot/Image
 curl -I http://192.168.50.10/netboot/k3-am625-sk.dtb
+```
 
-Use plain HTTP for the first test.
+Use plain HTTP for the first test\.
 
-Do not begin with HTTPS unless the U-Boot build is known to support it.
+---
 
-⸻
+## Part 1: Inspect U\-Boot
 
-Part 1: Inspect the U-Boot Environment
+At the U\-Boot prompt, run:
 
-Connect to the board through its serial console and interrupt autoboot.
-
-Example:
-
-Hit any key to stop autoboot:
-
-At the U-Boot prompt, inspect the version and available commands:
-
+```text
 version
 help wget
 help ping
 help booti
 help bootz
 printenv
+```
 
-Verify HTTP Support
+### Verify HTTP Support
 
-Run:
-
+```text
 help wget
+```
 
-If U-Boot responds with information about wget, HTTP download support is available.
+If U\-Boot reports:
 
-If U-Boot responds with:
-
+```text
 Unknown command 'wget'
+```
 
-the installed U-Boot build does not include HTTP download support.
+then this U\-Boot build does not include HTTP download support\. Use TFTP temporarily or use a U\-Boot build with `wget` support\.
 
-In that case, use one of the following:
+---
 
-* TFTP for initial network boot testing
-* A TI U-Boot image with wget support
-* A custom U-Boot build with HTTP support enabled
+## Part 2: Inspect Ethernet
 
-Do not replace or reflash U-Boot until the rest of the boot process has been tested.
+List Ethernet devices:
 
-⸻
-
-Part 2: Inspect the Ethernet Interface
-
-List the available Ethernet devices:
-
+```text
 eth list
+```
 
-Inspect the active Ethernet interface:
+Inspect the selected interface and MAC address:
 
+```text
 printenv ethact
 printenv ethprime
-
-Inspect the board’s Ethernet MAC address:
-
 printenv ethaddr
+```
 
-A valid MAC address is normally required.
+If necessary, temporarily select an interface:
 
-Do not permanently save a randomly invented MAC address if the board already has a factory-programmed address.
-
-If necessary, temporarily select an Ethernet device:
-
+```text
 setenv ethact ethernet@8000000
+```
 
-Replace ethernet@8000000 with the device name shown by:
+Replace `ethernet@8000000` with the name shown by `eth list`\.
 
-eth list
+Do not permanently save a randomly generated MAC address if the board already has a factory\-programmed one\.
 
-⸻
+---
 
-Part 3: Configure a Static IP Address
+## Part 3: Set a Static IP
 
-Because DHCP is not available, manually configure the board’s network settings.
+Because DHCP is unavailable, set the network configuration manually:
 
+```text
 setenv ipaddr 192.168.50.20
 setenv serverip 192.168.50.10
 setenv netmask 255.255.255.0
-
-Optionally prevent an automatic network load:
-
 setenv autoload no
+```
 
-Verify the settings:
+Verify it:
 
+```text
 printenv ipaddr
 printenv serverip
 printenv netmask
 printenv ethaddr
 printenv ethact
+```
 
 Expected values:
 
+```text
 ipaddr=192.168.50.20
 serverip=192.168.50.10
 netmask=255.255.255.0
+```
 
-Do not run:
+Do not run `saveenv`\.
 
-saveenv
+---
 
-The settings should remain temporary.
-
-⸻
-
-Part 4: Test Network Connectivity
+## Part 4: Test Connectivity
 
 Ping the HTTP server:
 
+```text
 ping ${serverip}
+```
 
 Expected result:
 
+```text
 host 192.168.50.10 is alive
+```
 
-Do not continue until the ping works.
+If ping fails, check:
 
-If the ping fails, check:
+- Ethernet link LEDs
+- The selected U\-Boot Ethernet interface
+- The board MAC address
+- Switch VLAN and access\-port configuration
+- Server firewall rules
+- Server interface configuration
+- IP addresses and netmask
+- Physical cabling
 
-* Ethernet link LEDs
-* The selected U-Boot Ethernet interface
-* The board’s MAC address
-* Switch VLAN configuration
-* Switch access-port configuration
-* Server firewall rules
-* Server network interface configuration
-* Board and server subnet configuration
-* Physical cabling
+Do not continue until ping works\.
 
-For a directly connected isolated network, both devices should be in the same subnet.
+---
 
-⸻
+## Part 5: Determine RAM Load Addresses
 
-Part 5: Determine Safe RAM Load Addresses
+Do not guess addresses\. Inspect the values already provided by U\-Boot:
 
-Do not guess RAM addresses unless absolutely necessary.
-
-Inspect the addresses already provided by the TI U-Boot environment:
-
+```text
 printenv loadaddr
 printenv fdtaddr
 printenv rdaddr
-
-Also check the upstream-style variable names:
-
 printenv kernel_addr_r
 printenv fdt_addr_r
 printenv ramdisk_addr_r
+```
 
-TI environments often use:
+### TI\-style variables
 
+If these are populated:
+
+```text
 loadaddr
 fdtaddr
 rdaddr
-
-Other U-Boot environments often use:
-
-kernel_addr_r
-fdt_addr_r
-ramdisk_addr_r
-
-Print all likely variables at once:
-
-printenv loadaddr fdtaddr rdaddr kernel_addr_r fdt_addr_r ramdisk_addr_r
-
-Option A: TI-Style Variables
-
-If these exist:
-
-loadaddr
-fdtaddr
-rdaddr
+```
 
 use:
 
+```text
 setenv kernel_addr ${loadaddr}
 setenv dtb_addr ${fdtaddr}
 setenv initrd_addr ${rdaddr}
+```
 
-Option B: Upstream-Style Variables
+### Upstream\-style variables
 
-If these exist:
+If these are populated:
 
+```text
 kernel_addr_r
 fdt_addr_r
 ramdisk_addr_r
+```
 
 use:
 
+```text
 setenv kernel_addr ${kernel_addr_r}
 setenv dtb_addr ${fdt_addr_r}
 setenv initrd_addr ${ramdisk_addr_r}
+```
 
 Verify the selected addresses:
 
+```text
 echo Kernel address: ${kernel_addr}
 echo DTB address: ${dtb_addr}
 echo Initramfs address: ${initrd_addr}
+```
 
-Do not continue if the required values are empty.
+Do not continue if the required values are empty\.
 
-⸻
+---
 
-Part 6: Test an HTTP Download
+## Part 6: Test an HTTP Download
 
-Start with the device tree because it is relatively small.
+Start with the smaller DTB file\.
 
-Example for an AM62x board:
+AM62x example:
 
+```text
 wget ${dtb_addr} ${serverip}:/netboot/k3-am625-sk.dtb
+```
 
-Example for an AM335x board:
+AM335x example:
 
+```text
 wget ${dtb_addr} ${serverip}:/netboot/am335x-boneblack.dtb
+```
 
-Some U-Boot versions may support a full URL:
+Some U\-Boot versions also support a full URL:
 
+```text
 wget ${dtb_addr} http://${serverip}/netboot/k3-am625-sk.dtb
+```
 
-The more widely compatible form is usually:
+Check the download:
 
-wget ${dtb_addr} ${serverip}:/netboot/k3-am625-sk.dtb
-
-After the download, inspect the size:
-
+```text
 echo ${filesize}
-
-Inspect the first bytes in memory:
-
 md.b ${dtb_addr} 40
-
-Validate the device tree:
-
 fdt addr ${dtb_addr}
 fdt header
+```
 
-If fdt header reports a valid flattened device tree, the download worked.
+A valid DTB starts with this magic value:
 
-If it fails, confirm that the HTTP server did not return an HTML error page instead of the DTB.
+```text
+d0 0d fe ed
+```
 
-For example, verify that the file path is correct and that the server is not returning a 404 Not Found response.
+If validation fails, verify that the HTTP server did not return a `404` HTML page instead of the DTB\.
 
-⸻
+---
 
-Part 7: Download the Kernel
+## Part 7: Download the Kernel
 
-ARM64 Boards Using Image
+### ARM64 using `Image`
 
-Boards such as AM62x, AM64x, AM65x, and some Jacinto platforms commonly use an uncompressed ARM64 kernel named Image.
-
-Download it:
-
+```text
 wget ${kernel_addr} ${serverip}:/netboot/Image
-
-Check the downloaded size:
-
 echo Kernel size: ${filesize}
-
-Inspect the beginning of the loaded data:
-
 md.b ${kernel_addr} 40
+```
 
-ARM32 Boards Using zImage
+### ARM32 using `zImage`
 
-Boards such as AM335x and some older TI processors commonly use zImage.
-
-Download it:
-
+```text
 wget ${kernel_addr} ${serverip}:/netboot/zImage
-
-Check the downloaded size:
-
 echo Kernel size: ${filesize}
+```
 
-⸻
+---
 
-Part 8: Preserve the Existing Root Filesystem
+## Part 8: Preserve the Existing Root Filesystem
 
-For the first test, keep the root filesystem on the SD card or eMMC.
+For the first test, keep the root filesystem on SD card or eMMC\.
 
-Only the kernel and device tree should come from HTTP.
+Inspect the current working boot configuration:
 
-Before changing the kernel command line, inspect the current working boot configuration:
-
+```text
 printenv bootargs
 printenv console
 printenv optargs
 printenv mmcroot
 printenv mmcargs
 printenv args_mmc
+```
 
-The exact root device and console device depend on the board.
+Common root devices include:
 
-Common examples include:
-
+```text
 /dev/mmcblk0p2
 /dev/mmcblk1p2
+```
 
 Common console values include:
 
+```text
 ttyS0,115200n8
 ttyS2,115200n8
 ttyO0,115200n8
+```
 
-Use the console and root-device values from the board’s existing successful local boot.
-
-Example Boot Arguments
+Reuse the values from the board’s known\-good local boot\.
 
 Example only:
 
+```text
 setenv bootargs "console=${console} root=/dev/mmcblk0p2 rootwait rw"
+```
 
-If ${console} is empty, set the correct console explicitly.
+If `${console}` is empty, set the correct console explicitly:
 
-Example:
-
+```text
 setenv bootargs "console=ttyS2,115200n8 root=/dev/mmcblk0p2 rootwait rw"
+```
 
-Do not blindly copy this console value. It must match the TI board.
+Do not blindly copy that console value\.
 
-Verify the final command line:
+---
 
-printenv bootargs
+## Part 9: Boot from RAM
 
-⸻
+### ARM64
 
-Part 9: Boot Manually from RAM
-
-ARM64 with Image
-
-Boot without an initramfs:
-
+```text
 booti ${kernel_addr} - ${dtb_addr}
+```
 
-The - means no initramfs is being supplied.
+### ARM32
 
-ARM32 with zImage
-
-Boot without an initramfs:
-
+```text
 bootz ${kernel_addr} - ${dtb_addr}
+```
 
-If Linux boots, then the following have been validated:
+The `-` means no initramfs is supplied\.
 
-* U-Boot Ethernet support
-* Static IP configuration
-* Switch and VLAN configuration
-* HTTP server access
-* Kernel download
-* Device-tree download
-* RAM load addresses
-* Kernel command line
-* Existing root filesystem
+---
 
-⸻
+## Minimal ARM64 Manual Test
 
-Minimal ARM64 Manual Test
-
-Adjust the board-specific DTB filename, root device, and console.
-
+```text
 setenv ipaddr 192.168.50.20
 setenv serverip 192.168.50.10
 setenv netmask 255.255.255.0
 setenv autoload no
+
 ping ${serverip}
+
 setenv kernel_addr ${loadaddr}
 setenv dtb_addr ${fdtaddr}
+
 wget ${kernel_addr} ${serverip}:/netboot/Image
 wget ${dtb_addr} ${serverip}:/netboot/k3-am625-sk.dtb
+
 fdt addr ${dtb_addr}
 fdt header
+
 setenv bootargs "console=${console} root=/dev/mmcblk0p2 rootwait rw"
+
 booti ${kernel_addr} - ${dtb_addr}
+```
 
-⸻
+---
 
-Minimal ARM32 Manual Test
+## Minimal ARM32 Manual Test
 
-Adjust the board-specific DTB filename, root device, and console.
-
+```text
 setenv ipaddr 192.168.50.20
 setenv serverip 192.168.50.10
 setenv netmask 255.255.255.0
 setenv autoload no
+
 ping ${serverip}
+
 setenv kernel_addr ${loadaddr}
 setenv dtb_addr ${fdtaddr}
+
 wget ${kernel_addr} ${serverip}:/netboot/zImage
 wget ${dtb_addr} ${serverip}:/netboot/am335x-boneblack.dtb
+
 fdt addr ${dtb_addr}
 fdt header
+
 setenv bootargs "console=${console} root=/dev/mmcblk0p2 rootwait rw"
+
 bootz ${kernel_addr} - ${dtb_addr}
+```
 
-⸻
+---
 
-Part 10: Optional Initramfs Boot
+## Optional Initramfs Boot
 
-An initramfs can be downloaded over HTTP after kernel-and-DTB booting works.
+After kernel\-and\-DTB booting works:
 
-Do not introduce it during the initial test unless required.
-
-Download the initramfs:
-
+```text
 wget ${initrd_addr} ${serverip}:/netboot/rootfs.cpio.gz
-
-Save its size before downloading another file:
-
 setenv initrd_size ${filesize}
+```
 
-ARM64 with Initramfs
+ARM64:
 
+```text
 booti ${kernel_addr} ${initrd_addr}:${initrd_size} ${dtb_addr}
+```
 
-ARM32 with Initramfs
+ARM32:
 
+```text
 bootz ${kernel_addr} ${initrd_addr}:${initrd_size} ${dtb_addr}
+```
 
-The initramfs load address must not overlap the kernel or device tree.
+Make sure the initramfs does not overlap the kernel or DTB in RAM\.
 
-Use the RAM addresses already provided by the TI U-Boot environment.
+---
 
-⸻
+## Move the Working Commands into `uEnv.txt`
 
-Part 11: Move the Working Commands into uEnv.txt
+Only automate the process after the manual commands work\.
 
-Only create the automated uEnv.txt configuration after the commands work manually.
+Back up the existing file:
 
-Before editing uEnv.txt, save a copy of the current file:
-
+```bash
 cp uEnv.txt uEnv.txt.backup
+```
 
-The exact way TI imports and runs uEnv.txt varies by SDK and U-Boot version.
+Inspect how your TI U\-Boot environment imports `uEnv.txt`:
 
-Inspect the current boot flow:
-
+```text
 printenv bootcmd
 printenv uenvcmd
 printenv importbootenv
 printenv loadbootenv
+```
 
-Many TI environments automatically run uenvcmd after importing uEnv.txt.
+Many TI environments execute `uenvcmd` after importing `uEnv.txt`\.
 
-⸻
+### Example ARM64 `uEnv.txt`
 
-Example ARM64 uEnv.txt
-
-This example:
-
-* Assigns a static IP
-* Downloads Image
-* Downloads the DTB
-* Uses an existing local root filesystem
-* Boots with booti
-
-Adjust the board-specific filenames and boot arguments.
-
+```ini
 ipaddr=192.168.50.20
 serverip=192.168.50.10
 netmask=255.255.255.0
 autoload=no
+
 kernel_file=/netboot/Image
 fdt_file=/netboot/k3-am625-sk.dtb
+
 http_get_kernel=wget ${loadaddr} ${serverip}:${kernel_file}
 http_get_fdt=wget ${fdtaddr} ${serverip}:${fdt_file}
 http_set_bootargs=setenv bootargs console=${console} root=/dev/mmcblk0p2 rootwait rw
 http_boot=run http_get_kernel; run http_get_fdt; run http_set_bootargs; booti ${loadaddr} - ${fdtaddr}
 uenvcmd=run http_boot
+```
 
-⸻
+### Example ARM32 `uEnv.txt`
 
-Example ARM32 uEnv.txt
-
-This example uses zImage and bootz.
-
+```ini
 ipaddr=192.168.50.20
 serverip=192.168.50.10
 netmask=255.255.255.0
 autoload=no
+
 kernel_file=/netboot/zImage
 fdt_file=/netboot/am335x-boneblack.dtb
+
 http_get_kernel=wget ${loadaddr} ${serverip}:${kernel_file}
 http_get_fdt=wget ${fdtaddr} ${serverip}:${fdt_file}
 http_set_bootargs=setenv bootargs console=${console} root=/dev/mmcblk0p2 rootwait rw
 http_boot=run http_get_kernel; run http_get_fdt; run http_set_bootargs; bootz ${loadaddr} - ${fdtaddr}
 uenvcmd=run http_boot
+```
 
-⸻
+### Safer ARM64 `uEnv.txt` with Checks
 
-Safer uEnv.txt with Download Checks
-
-A safer automated configuration checks that the server responds and that both downloads succeed before calling booti.
-
+```ini
 ipaddr=192.168.50.20
 serverip=192.168.50.10
 netmask=255.255.255.0
 autoload=no
+
 kernel_file=/netboot/Image
 fdt_file=/netboot/k3-am625-sk.dtb
+
 http_set_bootargs=setenv bootargs console=${console} root=/dev/mmcblk0p2 rootwait rw
 http_boot=if ping ${serverip}; then if wget ${loadaddr} ${serverip}:${kernel_file}; then if wget ${fdtaddr} ${serverip}:${fdt_file}; then run http_set_bootargs; booti ${loadaddr} - ${fdtaddr}; fi; fi; fi
 uenvcmd=run http_boot
+```
 
-For ARM32, replace the final command:
+For ARM32, replace:
 
+```text
 booti ${loadaddr} - ${fdtaddr}
+```
 
 with:
 
+```text
 bootz ${loadaddr} - ${fdtaddr}
+```
 
-⸻
+---
 
-Recommended Fallback Strategy
+## Recommended Fallback Strategy
 
-Do not immediately replace the normal local boot path.
+Do not immediately replace the normal local boot path\.
 
-The preferred behavior is:
+Preferred behavior:
 
-1. Attempt the HTTP boot.
-2. If the HTTP server is unavailable, allow normal local boot to continue.
-3. Keep serial-console access available.
-4. Keep a known-good SD card or boot partition available.
+1. Attempt HTTP boot\.
+2. If the server is unavailable, continue with the known\-good local boot\.
+3. Keep serial\-console access available\.
+4. Keep a known\-good SD card or boot partition available\.
 
-Whether normal boot continues after uenvcmd fails depends on the TI U-Boot boot script.
+Inspect the existing boot flow:
 
-Inspect:
-
+```text
 printenv bootcmd
+```
 
-If necessary, explicitly call the board’s known-good local boot command after the HTTP attempt.
+Copy the local fallback command from the board’s existing environment rather than guessing it\.
 
-The local fallback command varies significantly between TI SDK versions, so it should be copied from the board’s existing environment rather than guessed.
+---
 
-⸻
+## Debugging Commands
 
-Debugging Commands
+### Network settings
 
-Show Current Network Settings
-
+```text
 printenv ipaddr serverip netmask gatewayip ethaddr ethact
+```
 
-Show Boot Addresses
+### Boot addresses
 
+```text
 printenv loadaddr fdtaddr rdaddr
 printenv kernel_addr_r fdt_addr_r ramdisk_addr_r
+```
 
-Show Boot Configuration
+### Boot configuration
 
+```text
 printenv bootargs
 printenv bootcmd
 printenv uenvcmd
 printenv console
+```
 
-List Ethernet Devices
+### Connectivity
 
+```text
 eth list
-
-Test the Server
-
 ping ${serverip}
+```
 
-Download a File
+### HTTP download
 
+```text
 wget ${loadaddr} ${serverip}:/netboot/Image
-
-Show Downloaded File Size
-
 echo ${filesize}
-
-Inspect RAM
-
 md.b ${loadaddr} 40
+```
 
-Validate a Device Tree
+### DTB validation
 
+```text
 fdt addr ${fdtaddr}
 fdt header
+```
 
-⸻
+---
 
-Common Failure Modes
+## Common Failure Modes
 
-wget Is Not Available
+### `wget` is unavailable
 
-Symptom:
-
+```text
 Unknown command 'wget'
+```
 
-Cause:
+Use TFTP or a U\-Boot build with HTTP support\.
 
-The U-Boot build does not include HTTP download support.
+### Ping fails
 
-Possible solutions:
+Check `ethact`, link status, MAC address, VLAN configuration, firewall rules, subnet settings, and cabling\.
 
-* Use TFTP
-* Install a TI U-Boot build containing wget
-* Rebuild U-Boot with the appropriate network and wget support
+### HTTP download fails
 
-⸻
+Verify the URL from another computer:
 
-Ping Fails
-
-Possible causes:
-
-* Wrong ethact
-* No Ethernet link
-* Invalid or missing MAC address
-* Incorrect VLAN configuration
-* Board port is a tagged trunk when U-Boot expects untagged traffic
-* Server firewall
-* Incorrect subnet
-* Incorrect static IP address
-* Incorrect server address
-
-Resolve ping failures before debugging HTTP.
-
-⸻
-
-HTTP Download Returns an Error
-
-Possible causes:
-
-* Incorrect URL or path
-* HTTP server not listening on port 80
-* File permissions
-* Server firewall
-* Server returning a redirect
-* U-Boot HTTP implementation not supporting the redirect
-* HTTPS used instead of HTTP
-
-Test from another computer:
-
+```bash
 curl -v http://192.168.50.10/netboot/Image
+```
 
-⸻
+Check port 80, file permissions, redirects, firewall rules, and whether HTTPS was used accidentally\.
 
-fdt header Fails
+### `fdt header` fails
 
-Possible causes:
+Inspect memory:
 
-* Wrong file downloaded
-* HTTP server returned an HTML error page
-* Incorrect load address
-* Corrupted download
-* DTB file is compressed
-* Memory overlap
-
-Inspect the memory:
-
+```text
 md.b ${dtb_addr} 40
+```
 
-A valid DTB begins with the device-tree magic value:
+A valid DTB begins with:
 
+```text
 d0 0d fe ed
+```
 
-⸻
+### Kernel cannot mount root
 
-Kernel Starts but Cannot Mount Root Filesystem
+Typical errors:
 
-Typical messages include:
-
+```text
 VFS: Cannot open root device
+```
 
-or:
-
+```text
 Kernel panic - not syncing: VFS: Unable to mount root fs
+```
 
-Possible causes:
+Check the root partition, `rootwait`, built\-in storage/filesystem drivers, and kernel/rootfs compatibility\.
 
-* Wrong /dev/mmcblkXpY value
-* Missing storage driver in the kernel
-* Root filesystem is on a different partition
-* Missing rootwait
-* Filesystem driver not built into the kernel
-* Kernel and root filesystem are incompatible
+### No Linux console output
 
-Compare the HTTP-loaded kernel command line with the command line used during a successful local boot.
+Check the console device, baud rate, boot arguments, and DTB\. Reuse the values from a known\-good local boot\.
 
-⸻
+### Memory overlap
 
-No Linux Console Output
+Use U\-Boot’s existing `loadaddr`, `fdtaddr`, `rdaddr`, `kernel_addr_r`, `fdt_addr_r`, and `ramdisk_addr_r` values instead of inventing addresses\.
 
-Possible causes:
+---
 
-* Wrong console device
-* Wrong baud rate
-* Missing console argument
-* Device-tree mismatch
-* Kernel booted but is using another UART
+## Safety Checklist
 
-Inspect the existing working U-Boot variables:
+- [ ] Serial console access works\.
+- [ ] Autoboot can be interrupted\.
+- [ ] A known\-good local boot method is available\.
+- [ ] `wget` exists in U\-Boot\.
+- [ ] `ping ${serverip}` succeeds\.
+- [ ] The correct Ethernet interface is selected\.
+- [ ] A valid MAC address exists\.
+- [ ] The kernel downloads successfully\.
+- [ ] The DTB downloads successfully\.
+- [ ] `fdt header` validates the DTB\.
+- [ ] Kernel and DTB addresses do not overlap\.
+- [ ] The correct console value is known\.
+- [ ] The correct root partition is known\.
+- [ ] Manual `booti` or `bootz` succeeds\.
+- [ ] No flash\-write or environment\-save commands were used\.
+- [ ] The original `uEnv.txt` is backed up\.
+- [ ] A local boot fallback has been tested\.
 
-printenv console
-printenv bootargs
+---
 
-Reuse the exact console setting from the known-good boot.
+## Information to Capture
 
-⸻
-
-Kernel or DTB Memory Overlap
-
-Symptoms can include:
-
-* Random hangs
-* Invalid device tree
-* Kernel decompression failures
-* Kernel image corruption
-
-Use the board’s existing variables:
-
-loadaddr
-fdtaddr
-rdaddr
-
-or:
-
-kernel_addr_r
-fdt_addr_r
-ramdisk_addr_r
-
-Do not arbitrarily choose addresses without checking the board’s RAM map.
-
-⸻
-
-Safety Checklist
-
-Before running the automated configuration, confirm all of the following:
-
-* Serial console access works.
-* Autoboot can be interrupted.
-* A known-good local boot method is available.
-* wget exists in U-Boot.
-* ping ${serverip} succeeds.
-* The correct Ethernet interface is selected.
-* A valid MAC address exists.
-* The kernel downloads successfully.
-* The DTB downloads successfully.
-* fdt header validates the DTB.
-* The kernel and DTB load addresses do not overlap.
-* The correct console value is known.
-* The correct root partition is known.
-* Manual booti or bootz succeeds.
-* No flash write or environment-save commands are used.
-* The original uEnv.txt is backed up.
-* A local boot fallback has been tested.
-
-⸻
-
-Information to Capture for Board-Specific Configuration
-
-Save the output of the following commands:
-
+```text
 version
 bdinfo
 eth list
@@ -845,9 +765,11 @@ help wget
 help booti
 help bootz
 printenv
+```
 
-At minimum, capture:
+At minimum:
 
+```text
 printenv loadaddr
 printenv fdtaddr
 printenv rdaddr
@@ -860,9 +782,11 @@ printenv bootcmd
 printenv uenvcmd
 printenv ethaddr
 printenv ethact
+```
 
-Also record:
+Record:
 
+```text
 TI board model:
 Processor:
 U-Boot version:
@@ -873,72 +797,20 @@ Root partition:
 Console device:
 HTTP server IP:
 Board static IP:
+```
 
-⸻
+---
 
-Recommended Bring-Up Sequence
+## Recommended Bring\-Up Sequence
 
-Use this order to reduce the number of variables being debugged at once:
-
-1. Boot the board normally.
-2. Confirm serial-console access.
-3. Stop at the U-Boot prompt.
-4. Assign a static IP address.
-5. Ping the HTTP server.
-6. Download only the DTB.
-7. Validate the DTB with fdt header.
-8. Download the kernel.
-9. Boot the HTTP kernel with the existing local root filesystem.
-10. Repeat the manual boot several times.
-11. Add the tested commands to uEnv.txt.
-12. Verify that local fallback still works.
-13. Only then consider HTTP-loading an initramfs or using an NFS root filesystem.
-
-⸻
-
-Quick Reference
-
-ARM64
-
-setenv ipaddr 192.168.50.20
-setenv serverip 192.168.50.10
-setenv netmask 255.255.255.0
-setenv autoload no
-ping ${serverip}
-wget ${loadaddr} ${serverip}:/netboot/Image
-wget ${fdtaddr} ${serverip}:/netboot/k3-am625-sk.dtb
-fdt addr ${fdtaddr}
-fdt header
-setenv bootargs "console=${console} root=/dev/mmcblk0p2 rootwait rw"
-booti ${loadaddr} - ${fdtaddr}
-
-ARM32
-
-setenv ipaddr 192.168.50.20
-setenv serverip 192.168.50.10
-setenv netmask 255.255.255.0
-setenv autoload no
-ping ${serverip}
-wget ${loadaddr} ${serverip}:/netboot/zImage
-wget ${fdtaddr} ${serverip}:/netboot/am335x-boneblack.dtb
-fdt addr ${fdtaddr}
-fdt header
-setenv bootargs "console=${console} root=/dev/mmcblk0p2 rootwait rw"
-bootz ${loadaddr} - ${fdtaddr}
-
-⸻
-
-Important Warning
-
-Do not run any of the following during initial testing:
-
-saveenv
-env save
-mmc write
-mmc erase
-nand write
-nand erase
-sf write
-sf erase
-
-The purpose of the manual procedure is to load files into RAM and boot them without modifying permanent storage.
+1. Boot the board normally\.
+2. Confirm serial\-console access\.
+3. Stop at the U\-Boot prompt\.
+4. Assign a static IP address\.
+5. Ping the HTTP server\.
+6. Download only the DTB\.
+7. Validate the DTB with `fdt header`\.
+8. Download the kernel\.
+9. Boot the HTTP kernel with the existing local root filesystem\.
+10. Repeat the manual boot several times\.
+11. Add the tested c
